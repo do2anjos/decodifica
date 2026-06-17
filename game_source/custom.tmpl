@@ -139,7 +139,43 @@ asyncio.run( custom_site() )
 --><script type="application/javascript">
 // END BLOCK
 
+window.leaderboardStatus = "loading";
+window.leaderboardData = "[]";
 
+window.fetchLeaderboardJS = function() {
+    window.leaderboardStatus = "loading";
+    fetch('/api/leaderboard')
+        .then(res => res.json())
+        .then(data => {
+            window.leaderboardData = JSON.stringify(data);
+            window.leaderboardStatus = "loaded";
+        })
+        .catch(err => {
+            console.error('Leaderboard error:', err);
+            window.leaderboardStatus = "error";
+        });
+};
+
+window.postScore = function(nome, pontos, vidas, insignias_d, insignias_a) {
+    fetch('/api/score', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({nome, pontos, vidas, insignias_d, insignias_a})
+    }).catch(e => console.error(e));
+};
+
+window.postMetrics = function(payloadStr) {
+    try {
+        let payload = JSON.parse(payloadStr);
+        fetch('/api/metrics', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        }).catch(e => console.error(e));
+    } catch(e) {
+        console.error("Payload metrics error:", e);
+    }
+};
 
 // this dict is available under PyConfig.config from __main__
 

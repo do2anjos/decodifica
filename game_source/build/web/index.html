@@ -2,13 +2,13 @@
 #<!--
 
 print("""
-Loading DECODIFICA from game_source.apk
+Loading game_source from game_source.apk
     Pygbag Version : 0.9.3
     Template Version : 0.9.3
     Python  : 3.12
     CDN URL : https://pygame-web.github.io/cdn/0.9.3/
     Screen  : 1280x720
-    Title   : DECODIFICA
+    Title   : game_source
     Folder  : game_source
     Authors : pgw
     SPDX-License-Identifier: cookiecutter.spdx
@@ -178,7 +178,7 @@ function show_infobox() {
 
 </script>
 
-    <title>DECODIFICA</title>
+    <title>game_source</title>
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -442,43 +442,6 @@ frameborder="1"
     function frame_online(url) {
         window.frames["iframe"].location = url;
     }
-
-    // --- DECODIFICA API HELPERS ---
-    window.leaderboardData = "[]";
-    window.leaderboardStatus = "idle";
-
-    window.postScore = function(nome, pontos, vidas, insignias_d, insignias_a) {
-        fetch("/api/score", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({nome: nome, pontos: pontos, vidas: vidas, insignias_d: insignias_d, insignias_a: insignias_a})
-        }).then(res => console.log("Score salvo:", res.status))
-          .catch(err => console.error("Erro postScore:", err));
-    };
-
-    window.postMetrics = function(payload) {
-        fetch("/api/metrics", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: payload
-        }).then(res => console.log("Métricas salvas:", res.status))
-          .catch(err => console.error("Erro postMetrics:", err));
-    };
-
-    window.fetchLeaderboardJS = function() {
-        window.leaderboardStatus = "loading";
-        fetch("/api/leaderboard")
-            .then(res => res.text())
-            .then(text => {
-                window.leaderboardData = text;
-                window.leaderboardStatus = "loaded";
-                console.log("Leaderboard carregado:", text);
-            })
-            .catch(e => {
-                console.error("Erro fetch leaderboard:", e);
-                window.leaderboardStatus = "error";
-            });
-    };
 
     </script>
 
