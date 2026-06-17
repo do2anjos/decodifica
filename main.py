@@ -4,9 +4,23 @@ import sys
 import re
 import math
 import random
+try:
+    import threading
+except ImportError:
+    threading = None
+
+pyttsx3 = None
+import array as arr_module
+import json
+import os
+from data import *
+from ui import *
 
 # Inicializa o Pygame
+pygame.mixer.pre_init(44100, -16, 2, 512)
 pygame.init()
+if hasattr(pygame.key, 'start_text_input'):
+    pygame.key.start_text_input()
 
 # Task 11: Resolução 16:9
 WIDTH, HEIGHT = 1280, 720
@@ -14,149 +28,107 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("DECODIFICA: Guardiões das Lendas")
 
 # Task 1: Paleta Amazônica
-BG_TOP = (6, 28, 14)
-BG_BOT = (2, 10, 6)
-GOLD = (212, 175, 55)
-GOLD_LIGHT = (240, 210, 100)
-GOLD_DIM = (140, 115, 35)
-FOREST = (34, 100, 50)
-FOREST_DARK = (18, 50, 28)
-CARD_BG = (14, 38, 22)
-CARD_BORDER = (30, 70, 40)
-CARD_HOVER_COL = (22, 55, 35)
-ACCENT_ORANGE = (255, 140, 0)
-DANGER = (200, 50, 50)
-DANGER_LIGHT = (230, 80, 80)
-TEXT_COLOR = (235, 225, 205)
-TEXT_DIM = (160, 150, 130)
-PARCHMENT = (245, 235, 215)
-PARCHMENT_DARK = (200, 185, 160)
-HUD_BG = (10, 30, 18, 180)
-
 # Task 2: Fontes e Tipografia
-pygame.font.init()
-font_mega = pygame.font.SysFont("georgia", 72, bold=True)
-font_title = pygame.font.SysFont("georgia", 42, bold=True)
-font_subtitle = pygame.font.SysFont("georgia", 28, italic=True)
-font_text = pygame.font.SysFont("verdana", 19)
-font_btn = pygame.font.SysFont("verdana", 22, bold=True)
-font_hud = pygame.font.SysFont("verdana", 18, bold=True)
-font_small = pygame.font.SysFont("verdana", 14)
-font_icon = pygame.font.SysFont("verdana", 26, bold=True)
+def generate_tone(frequency, duration_ms, volume=0.25, fade_out=True):
+    sample_rate = 44100
+    n_samples = int(sample_rate * duration_ms / 1000)
+    buf = arr_module.array('h')
+    max_amp = int(32767 * volume)
+    for i in range(n_samples):
+        t = i / sample_rate
+        fade = max(0.0, 1.0 - (i / n_samples)) if fade_out else 1.0
+        val = int(max_amp * math.sin(2 * math.pi * frequency * t) * fade)
+        buf.append(val)  # left
+        buf.append(val)  # right
+    return pygame.mixer.Sound(buffer=buf)
 
+try:
+    # Som de acerto: duas notas ascendentes (Dó → Mi)
+    tone1 = generate_tone(523, 120, 0.2)
+    tone2 = generate_tone(659, 180, 0.25)
+    # Combinar em um único buffer
+    buf_success = arr_module.array('h')
+    buf_success.extend(tone1.get_raw())
+    buf_success.extend(tone2.get_raw())
+    snd_success = pygame.mixer.Sound(buffer=buf_success)
+    
+    # Som de erro: nota grave descendente
+    snd_error = generate_tone(220, 250, 0.18)
+except Exception:
+    snd_success = None
+    snd_error = None
+
+def play_sound(sound):
+    if sound:
+        try: sound.play()
+        except Exception: pass
+font_title = pygame.font.SysFont("georgia", 42, bold=True)
 # Dados dos Capítulos
-CHAPTERS_DATA = [
-    {
-        "name": "Capítulo 1: Lenda do Guaraná",
-        "rank": "Aprendiz",
-        "color": FOREST,
-        "paragraphs": [
-            {"id": "A", "text": "Toda a tribo xorou muito a perda da criança. Tupã se compadeceu do terrível zacrifício e enviou uma mensagem aos pajés."},
-            {"id": "B", "text": "Há muito tempo, numa aldeia na floresta, vivia um indiozinho muito querido. Ele trazia muita alegria e forca para o seu povo."},
-            {"id": "C", "text": "A mãe plantou os olhos do menino na terra fértil. Ali nasceu uma planta nova, cujas sementes parecem olhos: o guaraná."},
-            {"id": "D", "text": "Jurupari, o espírito do mal, sentiu inveja da criança e se transformou em uma serpente poderoza para atacá-la na floresta."}
-        ],
-        "correct_order": ["B", "D", "A", "C"],
-        "bugs": {
-            "xorou": {"correto": "chorou", "opcoes": ["chorou", "xorou", "xourou"]},
-            "zacrifício": {"correto": "sacrifício", "opcoes": ["sacrifício", "zacrifício", "sacrifisio"]},
-            "forca": {"correto": "força", "opcoes": ["força", "forca", "forsa"]},
-            "poderoza": {"correto": "poderosa", "opcoes": ["poderosa", "poderoza", "poderoça"]}
-        },
-        "mec4_options": [
-            ("Trocas de S por Z", True),
-            ("Trocas de CH por X", False),
-            ("Trocas de C por Ç", False),
-            ("Trocas de G por J", False)
-        ]
-    },
-    {
-        "name": "Capítulo 2: Lenda do Mapinguari",
-        "rank": "Explorador",
-        "color": ACCENT_ORANGE,
-        "paragraphs": [
-            {"id": "A", "text": "A fera andava pesadamente pelas matas, devorando tudo o que encontrava. Os caçadores evitavam a selva, com medo de encontrar a criatura selvajem."},
-            {"id": "B", "text": "Dizem que o Mapinguari era um antigo índio guerreiro que descobriu o segredo da imortalidade. Mas a magia teve um preço terrível."},
-            {"id": "C", "text": "Hoje, quem se arrisca numa longa viajem pela mata densa sabe que não deve chingar a natureza, para não acordar o monstro."},
-            {"id": "D", "text": "Ele se transformou num monstro enorme, coberto de pelos ruivos, com um olho só e uma boca assustadora na barriga, impossível não enchergar de longe."}
-        ],
-        "correct_order": ["B", "D", "A", "C"],
-        "bugs": {
-            "selvajem": {"correto": "selvagem", "opcoes": ["selvagem", "selvajem", "selvagên"]},
-            "enchergar": {"correto": "enxergar", "opcoes": ["enxergar", "enchergar", "enxegar"]},
-            "viajem": {"correto": "viagem", "opcoes": ["viagem", "viajem", "viagen"]},
-            "chingar": {"correto": "xingar", "opcoes": ["xingar", "chingar", "ximgar"]}
-        },
-        "mec4_options": [
-            ("Troca de G por J e X por CH", True),
-            ("Troca de S por Z e C por Ç", False),
-            ("Uso incorreto de H no início", False),
-            ("Omissão de R no infinitivo", False)
-        ]
-    },
-    {
-        "name": "Capítulo 3: Lenda da Cobra Grande",
-        "rank": "Guardião",
-        "color": DANGER,
-        "paragraphs": [
-            {"id": "A", "text": "Com o passar do tempo, a cobra cresceu tanto que o rio ficou pequeno. Ela se tornou a Boiúna, uma assonbração dos rios."},
-            {"id": "B", "text": "Conta a lenda que uma mulher grávida deu à luz duas crianças gêmeas. Uma delas tinha a forma de uma serpente escura e assustadora."},
-            {"id": "C", "text": "A mãe, com medo, jogou a serpente no rio. Lá, ela se alimentava dos peixes e de qualquer animau que caísse na água."},
-            {"id": "D", "text": "Os pescadores dizem que, à noite, seus olhos brilham como fogo, e quando ela se move, um forte temporau e o som de tanbor anunciam sua chegada."},
-            {"id": "E", "text": "A Iara, sereia dos rios, cantava uma música suave para atrair os pescadores. Ninguém resistia ao seu encanto na floresta."}
-        ],
-        "correct_order": ["B", "C", "A", "D"],
-        "bugs": {
-            "assonbração": {"correto": "assombração", "opcoes": ["assombração", "assonbração", "asombração"]},
-            "animau": {"correto": "animal", "opcoes": ["animal", "animau", "animalo"]},
-            "temporau": {"correto": "temporal", "opcoes": ["temporal", "temporau", "temporaw"]},
-            "tanbor": {"correto": "tambor", "opcoes": ["tambor", "tanbor", "tâmbor"]}
-        },
-        "mec4_options": [
-            ("Uso de N antes de P/B e U no final", True),
-            ("Troca de J por G e X por CH", False),
-            ("Uso incorreto de SS ou Ç", False),
-            ("Confusão de R e RR", False)
-        ]
-    },
-    {
-        "name": "Capítulo 4: Lenda da Vitória-Régia",
-        "rank": "Mestre",
-        "color": GOLD,
-        "paragraphs": [
-            {"id": "A", "text": "Certa noite, Naiá viu o reflexo da lua nas águas escuras do lago. Pensando que a lua tinha descido para buscá-la, ela mergulhou com muita corassão."},
-            {"id": "B", "text": "Naiá era uma jovem índia que se apaixonou por Jaci, a lua. Ela sonhava em ser transformada em uma estrela brilhante no céu, ao lado de Jaci."},
-            {"id": "C", "text": "Jaci ficou com pena da belesa da jovem e a transformou não em uma estrela do céu, mas na Estrela das águas: a Vitória-Régia, que floresce à noite para encantar cada páçaro."},
-            {"id": "D", "text": "Toda noite, ela corria pelas matas tentando alcançar a lua. A bela índia ficava triste quando não conseguia, sentindo uma enorme emossão."},
-            {"id": "E", "text": "O boto cor-de-rosa surgia nas festas vestido de branco, dançando com as moças mais bonitas da aldeia."},
-            {"id": "F", "text": "Nas noites de lua cheia, o lobisomem corria pelos campos assustando as ovelhas e os moradores da região."}
-        ],
-        "correct_order": ["B", "D", "A", "C"],
-        "bugs": {
-            "corassão": {"correto": "coração", "opcoes": ["coração", "corassão", "corasão"]},
-            "belesa": {"correto": "beleza", "opcoes": ["beleza", "belesa", "beleça"]},
-            "páçaro": {"correto": "pássaro", "opcoes": ["pássaro", "páçaro", "pácaro"]},
-            "emossão": {"correto": "emoção", "opcoes": ["emoção", "emossão", "emosão"]}
-        },
-        "mec4_options": [
-            ("Confusão entre SS, Ç e Z", True),
-            ("Troca de C por S e H por NH", False),
-            ("Uso incorreto de L no lugar de U", False),
-            ("Omissão de M antes de P e B", False)
-        ]
-    }
-]
 
 # --- Estado Global ---
 game_state = "MENU"
 lives = 3
 score = 0
+player_name = ""
+leaderboard_data = []
+leaderboard_status = "loading"
 message = ""
 message_timer = 0
 frame_count = 0
 current_chapter_index = 0
-unlocked_chapters = 4
+unlocked_chapters = 1
 typed_word = ""
+typed_word_cursor = 0
+lupa_active = False
+state_before_gameover = ""
+collected_fragments = []
+fragment_reveal_timer = 0
+fragment_reveal_text = ""
+insignias_decomposicao = 0
+insignias_abstracao = 0
+chapter_start_time = 0
+m4_start_time = 0
+current_fakes_count = 0
+student_explanation = ""
+
+# --- Métricas de Aprendizagem (Teacher Dashboard) ---
+learning_metrics = []
+
+def export_learning_metrics(chapter_name, real_bugs, fakes, total_bugs, score_gained, time_spent):
+    recall = real_bugs / total_bugs if total_bugs > 0 else 0
+    precision = real_bugs / (real_bugs + fakes) if (real_bugs + fakes) > 0 else 0
+    metric = {
+        "chapter": chapter_name,
+        "found_bugs": real_bugs,
+        "false_positives": fakes,
+        "total_bugs": total_bugs,
+        "recall_percent": round(recall * 100, 1),
+        "precision_percent": round(precision * 100, 1),
+        "score_gained": score_gained,
+        "time_spent_seconds": round(time_spent, 1)
+    }
+    learning_metrics.append(metric)
+    try:
+        with open("teacher_dashboard_log.json", "w", encoding="utf-8") as f:
+            json.dump(learning_metrics, f, indent=4, ensure_ascii=False)
+    except Exception:
+        pass
+
+def update_m4_metrics(m4_time_spent):
+    if len(learning_metrics) > 0:
+        learning_metrics[-1]["m4_time_spent_seconds"] = round(m4_time_spent, 1)
+        try:
+            with open("teacher_dashboard_log.json", "w", encoding="utf-8") as f:
+                import json
+                json.dump(learning_metrics, f, indent=4, ensure_ascii=False)
+        except Exception:
+            pass
+
+
+def show_msg(msg, duration=120):
+    global message, message_timer
+    message = msg
+    message_timer = duration
 
 cinematic_slide = 0
 cinematic_timer = 0
@@ -176,6 +148,37 @@ current_bug_index = 0
 modal_buttons = []
 mec4_buttons = []
 roadmap_buttons = []
+
+# --- Inicialização do TTS (Text-to-Speech) ---
+try:
+    if sys.platform == 'emscripten':
+        tts_engine = None
+    elif pyttsx3:
+        tts_engine = pyttsx3.init()
+        tts_engine.setProperty('rate', 150)
+    else:
+        tts_engine = None
+except Exception as e:
+    tts_engine = None
+    print(f"Aviso: Não foi possível carregar o TTS. {e}")
+
+def speak_word_thread(word):
+    if tts_engine:
+        try:
+            tts_engine.say(word)
+            tts_engine.runAndWait()
+        except Exception:
+            pass
+
+def play_phonetic_feedback(word):
+    """Executa a fala da palavra correta em uma thread separada para não travar o jogo."""
+    try:
+        if threading:
+            threading.Thread(target=speak_word_thread, args=(word,), daemon=True).start()
+        else:
+            speak_word_thread(word)
+    except Exception as e:
+        print(f"Erro no TTS (ignorado na Web): {e}")
 
 # Task 3: Sistema de Partículas (Vagalumes)
 class Firefly:
@@ -240,14 +243,6 @@ class VictoryParticle:
 victory_particles = [VictoryParticle() for _ in range(60)]
 
 # --- Funções de Desenho ---
-def draw_gradient_bg(surface):
-    for y in range(HEIGHT):
-        t = y / HEIGHT
-        r = int(BG_TOP[0] * (1 - t) + BG_BOT[0] * t)
-        g = int(BG_TOP[1] * (1 - t) + BG_BOT[1] * t)
-        b = int(BG_TOP[2] * (1 - t) + BG_BOT[2] * t)
-        pygame.draw.line(surface, (r, g, b), (0, y), (WIDTH, y))
-
 # Pre-render o gradiente (performance)
 bg_surface = pygame.Surface((WIDTH, HEIGHT))
 draw_gradient_bg(bg_surface)
@@ -265,157 +260,9 @@ def draw_fireflies(surface):
         f.update(1)
         f.draw(surface)
 
-def draw_hud(surface):
-    hud_panel = pygame.Surface((WIDTH, 55), pygame.SRCALPHA)
-    hud_panel.fill((10, 30, 18, 160))
-    surface.blit(hud_panel, (0, 0))
-    pygame.draw.line(surface, GOLD_DIM, (0, 55), (WIDTH, 55), 1)
-    
-    # Vidas como círculos
-    lx = 30
-    label = font_hud.render("Vidas:", True, TEXT_DIM)
-    surface.blit(label, (lx, 17))
-    lx += label.get_width() + 10
-    for i in range(3):
-        color = DANGER if i < lives else (60, 30, 30)
-        pygame.draw.circle(surface, color, (lx + i * 28, 28), 10)
-        if i < lives:
-            pygame.draw.circle(surface, DANGER_LIGHT, (lx + i * 28 - 3, 25), 3)
-    
-    # Pontuação com diamante
-    px = WIDTH - 250
-    # Diamante (losango)
-    diamond_pts = [(px, 28), (px+10, 18), (px+20, 28), (px+10, 38)]
-    pygame.draw.polygon(surface, GOLD, diamond_pts)
-    pygame.draw.polygon(surface, GOLD_LIGHT, [(px+5, 28), (px+10, 20), (px+15, 28)])
-    
-    pts_text = font_hud.render(f"{score} Pontos de Código", True, GOLD_LIGHT)
-    surface.blit(pts_text, (px + 28, 17))
-
-# --- Funções Auxiliares ---
-def wrap_text(text, font, max_width):
-    words = text.split(' ')
-    lines = []
-    current_line = []
-    for word in words:
-        current_line.append(word)
-        fw, fh = font.size(' '.join(current_line))
-        if fw > max_width:
-            current_line.pop()
-            lines.append(' '.join(current_line))
-            current_line = [word]
-    if current_line:
-        lines.append(' '.join(current_line))
-    return lines
-
-def clean_word(w):
-    return re.sub(r'[^\w]', '', w.lower())
-
-def show_msg(msg, frames=180):
-    global message, message_timer
-    message = msg
-    message_timer = frames
-
 # --- Classes ---
-class DraggableCard:
-    def __init__(self, x, y, w, h, paragraph_data, color_index):
-        self.rect = pygame.Rect(x, y, w, h)
-        self.data = paragraph_data
-        self.dragging = False
-        self.offset_x = 0
-        self.offset_y = 0
-        
-        # Scaffolding visual apenas na Fase 1
-        if current_chapter_index == 0:
-            cores = [FOREST, ACCENT_ORANGE, GOLD, DANGER]
-            self.border_color = cores[color_index % len(cores)]
-        else:
-            self.border_color = CARD_BORDER
-            
-        self.lines = wrap_text(self.data["text"], font_text, w - 40)
-        
-    def draw(self, surface):
-        # Sombra
-        if self.dragging:
-            shadow = pygame.Surface((self.rect.w + 6, self.rect.h + 6), pygame.SRCALPHA)
-            shadow.fill((0, 0, 0, 60))
-            surface.blit(shadow, (self.rect.x + 4, self.rect.y + 6))
-            
-        color = CARD_HOVER_COL if self.dragging else CARD_BG
-        pygame.draw.rect(surface, color, self.rect, border_radius=12)
-        pygame.draw.rect(surface, CARD_BORDER, self.rect, width=1, border_radius=12)
-        # Barra lateral
-        bar = pygame.Rect(self.rect.x, self.rect.y, 12, self.rect.height)
-        pygame.draw.rect(surface, self.border_color, bar, border_top_left_radius=12, border_bottom_left_radius=12)
-        
-        y_offset = self.rect.y + 15
-        for line in self.lines:
-            text_surf = font_text.render(line, True, TEXT_COLOR)
-            surface.blit(text_surf, (self.rect.x + 24, y_offset))
-            y_offset += 26
-
-class ClickableWord:
-    def __init__(self, x, y, word_text):
-        self.text = word_text
-        self.clean = clean_word(word_text)
-        self.surf = font_text.render(self.text, True, PARCHMENT)
-        self.rect = pygame.Rect(x, y, self.surf.get_width() + 6, self.surf.get_height() + 4)
-        self.marked = False
-        self.corrected = False
-        
-    def set_text(self, new_text):
-        self.text = new_text
-        self.clean = clean_word(new_text)
-        self.surf = font_text.render(self.text, True, GOLD_LIGHT)
-        
-    def draw(self, surface):
-        if self.marked:
-            pygame.draw.rect(surface, ACCENT_ORANGE, self.rect, border_radius=4)
-            tsurf = font_text.render(self.text, True, (20, 10, 0))
-            surface.blit(tsurf, (self.rect.x + 3, self.rect.y + 2))
-        else:
-            surface.blit(self.surf, (self.rect.x + 3, self.rect.y + 2))
-            if self.corrected:
-                pygame.draw.line(surface, GOLD, (self.rect.x, self.rect.bottom - 1), (self.rect.right, self.rect.bottom - 1), 2)
-
-class Button:
-    def __init__(self, x, y, w, h, text, color=FOREST, text_color=GOLD_LIGHT):
-        self.rect = pygame.Rect(x, y, w, h)
-        self.text = text
-        self.color = color
-        self.text_color = text_color
-        self.hovered = False
-        self.text_surf = font_btn.render(text, True, text_color)
-        self.text_rect = self.text_surf.get_rect(center=self.rect.center)
-        
-    def update_hover(self, mouse_pos):
-        self.hovered = self.rect.collidepoint(mouse_pos)
-        
-    def draw(self, surface):
-        # Sombra
-        shadow_rect = self.rect.move(3, 4)
-        pygame.draw.rect(surface, (0, 0, 0, 80) if not self.hovered else (0,0,0), shadow_rect, border_radius=10)
-        
-        if self.hovered:
-            # Borda glow
-            glow_rect = self.rect.inflate(4, 4)
-            pygame.draw.rect(surface, GOLD, glow_rect, border_radius=12)
-            
-        col = tuple(min(255, c + 25) for c in self.color) if self.hovered else self.color
-        pygame.draw.rect(surface, col, self.rect, border_radius=10)
-        
-        if not self.hovered:
-            pygame.draw.rect(surface, GOLD_DIM, self.rect, width=1, border_radius=10)
-        
-        self.text_surf = font_btn.render(self.text, True, (255,255,255) if self.hovered else self.text_color)
-        self.text_rect = self.text_surf.get_rect(center=self.rect.center)
-        surface.blit(self.text_surf, self.text_rect)
-        
-    def is_clicked(self, pos):
-        return self.rect.collidepoint(pos)
-
 # Botões
-btn_play_menu = Button(WIDTH//2 - 140, HEIGHT//2 + 80, 280, 55, "Iniciar Aventura", FOREST_DARK, GOLD_LIGHT)
+btn_play_menu = Button(WIDTH//2 - 140, HEIGHT//2 + 60, 280, 55, "Iniciar Aventura", FOREST_DARK, GOLD_LIGHT)
 btn_next_intro = Button(WIDTH//2 - 110, HEIGHT - 110, 220, 50, "Entendi!", FOREST_DARK, GOLD_LIGHT)
 btn_check = Button(WIDTH//2 - 120, HEIGHT - 85, 240, 52, "Verificar Ordem", FOREST_DARK, GOLD_LIGHT)
 btn_finish_bugs = Button(WIDTH//2 - 120, HEIGHT - 85, 240, 52, "Terminei a Busca", FOREST_DARK, GOLD_LIGHT)
@@ -424,11 +271,79 @@ btn_back_roadmap = Button(WIDTH//2 - 140, HEIGHT - 100, 280, 55, "Voltar ao Mapa
 btn_skip_cine = Button(WIDTH - 160, HEIGHT - 60, 130, 40, "Pular >>", (60, 60, 60), (200, 200, 200))
 btn_start_mission = Button(WIDTH//2 - 140, HEIGHT//2 + 50, 280, 55, "Assumir Missão", DANGER, GOLD_LIGHT)
 btn_finish_book = Button(WIDTH//2 - 120, HEIGHT - 85, 240, 52, "Concluir Lenda", FOREST_DARK, GOLD_LIGHT)
+btn_lupa = Button(WIDTH - 150, 10, 130, 35, "Lupa (L)", FOREST_DARK, GOLD_LIGHT)
+btn_voltar = Button(WIDTH - 150, 60, 130, 35, "< Voltar", FOREST_DARK, GOLD_LIGHT)
+btn_ranking_menu = Button(WIDTH//2 - 140, HEIGHT//2 + 130, 280, 55, "Ver Ranking", FOREST, GOLD_LIGHT)
+btn_confirm_name = Button(WIDTH//2 - 100, HEIGHT//2 + 80, 200, 50, "Confirmar", FOREST_DARK, GOLD_LIGHT)
+btn_voltar_menu = Button(WIDTH//2 - 100, HEIGHT - 80, 200, 50, "Voltar", FOREST_DARK, GOLD_LIGHT)
+btn_voltar_intro = Button(WIDTH//2 - 230, HEIGHT - 120, 220, 50, "Voltar", FOREST_DARK, GOLD_LIGHT)
+btn_retry = Button(WIDTH//2 - 100, HEIGHT//2 + 50, 200, 50, "Tentar Novamente", DANGER, GOLD_LIGHT)
+btn_galeria = Button(WIDTH - 200, HEIGHT - 70, 180, 50, "Galeria de Arte", FOREST_DARK, GOLD_LIGHT)
 
-all_buttons = [btn_play_menu, btn_next_intro, btn_check, btn_finish_bugs, btn_back_roadmap, btn_skip_cine, btn_start_mission, btn_finish_book]
+btn_voltar_menu_principal = Button(20, 20, 150, 40, "< Menu", FOREST_DARK, GOLD_LIGHT)
+btn_ready_tutorial = Button(WIDTH//2 + 10, HEIGHT - 120, 220, 50, "Estou Pronto!", FOREST, GOLD_LIGHT)
+
+all_buttons = [btn_play_menu, btn_next_intro, btn_check, btn_finish_bugs, btn_back_roadmap, btn_skip_cine, btn_start_mission, btn_finish_book, btn_lupa, btn_voltar, btn_retry, btn_galeria, btn_ranking_menu, btn_confirm_name, btn_voltar_menu, btn_voltar_intro, btn_voltar_menu_principal, btn_ready_tutorial]
+
+async def fetch_leaderboard_task():
+    global leaderboard_status, leaderboard_data
+    try:
+        import js
+        import json
+        resp = await js.fetch("/api/leaderboard")
+        text = await resp.text()
+        leaderboard_data = json.loads(text)
+        leaderboard_status = "loaded"
+    except Exception as e:
+        print("Erro fetch leaderboard", e)
+        leaderboard_status = "error"
+
+def fetch_leaderboard():
+    global leaderboard_status
+    leaderboard_status = "loading"
+    asyncio.create_task(fetch_leaderboard_task())
+
+def submit_score():
+    try:
+        import js
+        import json
+        opts = js.Object.new()
+        opts.method = "POST"
+        headers = js.Object.new()
+        headers["Content-Type"] = "application/json"
+        opts.headers = headers
+        opts.body = json.dumps({
+            "nome": player_name, 
+            "pontos": score,
+            "vidas": lives,
+            "insignias_d": insignias_decomposicao,
+            "insignias_a": insignias_abstracao
+        })
+        js.fetch("/api/score", opts)
+    except Exception:
+        pass
+
+def submit_metrics():
+    try:
+        if not learning_metrics: return
+        import js
+        import json
+        metric = learning_metrics[-1]
+        opts = js.Object.new()
+        opts.method = "POST"
+        headers = js.Object.new()
+        headers["Content-Type"] = "application/json"
+        opts.headers = headers
+        payload = metric.copy()
+        payload["nome"] = player_name
+        opts.body = json.dumps(payload)
+        js.fetch("/api/metrics", opts)
+    except Exception:
+        pass
 
 def setup_mecanica_1():
-    global cards
+    global cards, chapter_start_time
+    chapter_start_time = pygame.time.get_ticks()
     cards = []
     start_y = 100
     chapter = CHAPTERS_DATA[current_chapter_index]
@@ -439,11 +354,12 @@ def setup_mecanica_1():
     y_inc = 95
     
     for i, p in enumerate(chapter["paragraphs"]):
-        cards.append(DraggableCard(20, start_y, 540, card_h, p, i))
+        cards.append(DraggableCard(20, start_y, 540, card_h, p["id"], p["text"]))
         start_y += y_inc
 
 def setup_mecanica_2(ordered_ids):
-    global clickable_words
+    global clickable_words, bugs_to_fix, chapter_start_time, current_fakes_count
+    current_fakes_count = 0
     clickable_words = []
     start_x = 120
     start_y = 160
@@ -459,24 +375,26 @@ def setup_mecanica_2(ordered_ids):
             if current_x + surf.get_width() > max_w:
                 current_x = start_x
                 current_y += 38
-            cw = ClickableWord(current_x, current_y, w)
+            cw = ClickableWord(w, current_x, current_y)
             clickable_words.append(cw)
             current_x += surf.get_width() + 12
         current_x = start_x
         current_y += 55
 
 def setup_mecanica_3():
-    global bugs_to_fix, current_bug_index, modal_buttons, typed_word
+    global bugs_to_fix, current_bug_index, modal_buttons, typed_word, typed_word_cursor
     chapter_bugs = CHAPTERS_DATA[current_chapter_index]["bugs"]
     bugs_to_fix = [cw for cw in clickable_words if cw.clean in chapter_bugs.keys()]
     current_bug_index = 0
     typed_word = ""
+    typed_word_cursor = 0
     create_modal_buttons()
     
 def create_modal_buttons():
-    global modal_buttons, typed_word
+    global modal_buttons, typed_word, typed_word_cursor
     modal_buttons = []
     typed_word = ""
+    typed_word_cursor = 0
     if current_bug_index >= len(bugs_to_fix):
         return
     
@@ -489,19 +407,20 @@ def create_modal_buttons():
     opcoes = chapter_bugs[bug_cw.clean]["opcoes"]
     start_y = HEIGHT//2 + 10
     for i, op in enumerate(opcoes):
-        btn = Button(WIDTH//2 - 160, start_y, 320, 48, op, CARD_BG, PARCHMENT)
+        btn = Button(WIDTH//2 - 160, start_y, 320, 48, op, CARD_BG, FOREST_DARK)
         btn.is_correct = (op == chapter_bugs[bug_cw.clean]["correto"])
         modal_buttons.append(btn)
         all_buttons.append(btn)
         start_y += 62
 
 def setup_mecanica_4():
-    global mec4_buttons
+    global mec4_buttons, m4_start_time
+    m4_start_time = pygame.time.get_ticks()
     mec4_buttons = []
     start_y = HEIGHT//2 - 40
     opcoes = CHAPTERS_DATA[current_chapter_index]["mec4_options"]
     for txt, correct in opcoes:
-        btn = Button(WIDTH//2 - 160, start_y, 320, 48, txt, CARD_BG, PARCHMENT)
+        btn = Button(WIDTH//2 - 160, start_y, 320, 48, txt, CARD_BG, FOREST_DARK)
         btn.is_correct = correct
         mec4_buttons.append(btn)
         all_buttons.append(btn)
@@ -519,47 +438,58 @@ def check_order():
         show_msg(f"Coloque os {len(correct)} parágrafos da lenda na zona alvo!", 180)
         return
         
-    order = [c.data["id"] for c in cards_in_zone]
+    order = [c.para_id for c in cards_in_zone]
     
     if order == correct:
         show_msg("A lenda faz sentido! Avançando...", 120)
+        play_sound(snd_success)
         saved_order = order
+        # Bônus: Insígnia de Decomposição
+        global insignias_decomposicao
+        if game_state == "MECANICA_1": insignias_decomposicao += 1
         game_state = "MECANICA_1_WIN"
     else:
-        lives -= 1
         if len(order) > len(correct):
             show_msg("Há um parágrafo intruso! Jogue-o na Lixeira.", 180)
         else:
-            show_msg("Ordem incorreta! Lembre-se do Início, Meio e Fim.", 120)
-            
-        if lives <= 0:
-            show_msg("Fim de Jogo! A lenda foi corrompida.", 180)
-            game_state = "FIM"
+            show_msg("A ordem não faz sentido. Lembre-se: uma história precisa de Início, Meio e Fim.", 240)
+            play_sound(snd_error)
 
 def check_bugs():
-    global game_state, score, lives
+    global game_state, score, lives, current_fakes_count
     marked_words = [cw for cw in clickable_words if cw.marked]
     if not marked_words:
         show_msg("Clique nas palavras com erro ortográfico para marcá-las.", 180)
         return
     real_bugs = 0
-    fakes = 0
     chapter_bugs = CHAPTERS_DATA[current_chapter_index]["bugs"]
     for cw in marked_words:
         if cw.clean in chapter_bugs.keys():
             real_bugs += 1
         else:
-            fakes += 1
             cw.marked = False
-    if fakes > 0:
-        score -= fakes * 5
-        show_msg(f"Você marcou {fakes} palavras corretas como bug! (-{fakes*5} pts)", 200)
-    elif real_bugs == len(chapter_bugs):
+            
+    min_bugs = math.ceil(len(chapter_bugs) * 0.7)
+    
+    if real_bugs >= min_bugs:
         score += 100
-        show_msg("Todos os bugs encontrados! Hora de corrigir.", 120)
+        if real_bugs == len(chapter_bugs):
+            show_msg("Todos os bugs encontrados! Hora de corrigir.", 120)
+        else:
+            show_msg(f"Excelente! Encontrou {real_bugs} bugs (meta: {min_bugs}). Hora de corrigir.", 120)
+        play_sound(snd_success)
+        # Bônus: Insígnia de Abstração se não marcou fakes
+        global insignias_abstracao
+        if game_state == "MECANICA_2" and current_fakes_count == 0:  # Garante que só ganha 1 vez sem errar fakes
+            insignias_abstracao += 1
+            
+        time_spent = (pygame.time.get_ticks() - chapter_start_time) / 1000.0
+        export_learning_metrics(CHAPTERS_DATA[current_chapter_index]["name"], real_bugs, current_fakes_count, len(chapter_bugs), 100, time_spent)
         game_state = "MECANICA_2_WIN"
     else:
-        show_msg(f"Faltam bugs... Encontrou {real_bugs} de {len(chapter_bugs)}.", 180)
+        show_msg(f"Faltam bugs... Encontrou {real_bugs} (Meta: {min_bugs}).", 180)
+
+
 
 def snap_cards():
     cards_in_zone = [c for c in cards if c.rect.centerx > 600 and c.rect.centery < HEIGHT - 90]
@@ -570,64 +500,11 @@ def snap_cards():
         c.rect.y = start_y
         start_y += 100
 
-def draw_parchment(surface, rect):
-    pygame.draw.rect(surface, PARCHMENT_DARK, rect.inflate(6,6), border_radius=14)
-    pygame.draw.rect(surface, PARCHMENT, rect, border_radius=12)
-    # Ornamento superior
-    pygame.draw.line(surface, GOLD_DIM, (rect.x + 20, rect.y + 12), (rect.x + rect.w - 20, rect.y + 12), 1)
-    pygame.draw.line(surface, GOLD_DIM, (rect.x + 20, rect.y + 15), (rect.x + rect.w - 20, rect.y + 15), 1)
-    # Ornamento inferior
-    pygame.draw.line(surface, GOLD_DIM, (rect.x + 20, rect.bottom - 15), (rect.x + rect.w - 20, rect.bottom - 15), 1)
-    pygame.draw.line(surface, GOLD_DIM, (rect.x + 20, rect.bottom - 12), (rect.x + rect.w - 20, rect.bottom - 12), 1)
-
-def draw_modal(surface, rect, border_color=GOLD):
-    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 190))
-    surface.blit(overlay, (0, 0))
-    
-    # Glow atrás do modal
-    glow = rect.inflate(12, 12)
-    pygame.draw.rect(surface, border_color, glow, border_radius=18)
-    
-    pygame.draw.rect(surface, BG_TOP, rect, border_radius=15)
-    pygame.draw.rect(surface, border_color, rect, width=2, border_radius=15)
-    
-    # Decoração superior
-    pygame.draw.line(surface, GOLD_DIM, (rect.x + 30, rect.y + 55), (rect.x + rect.w - 30, rect.y + 55), 1)
-
-def draw_drop_zone(surface):
-    dz = pygame.Rect(600, 100, WIDTH - 640, HEIGHT - 200)
-    pygame.draw.rect(surface, (10, 25, 16), dz, border_radius=12)
-    # Borda pontilhada
-    for i in range(0, dz.w, 16):
-        pygame.draw.line(surface, GOLD_DIM, (dz.x + i, dz.y), (dz.x + min(i+8, dz.w), dz.y), 1)
-        pygame.draw.line(surface, GOLD_DIM, (dz.x + i, dz.bottom), (dz.x + min(i+8, dz.w), dz.bottom), 1)
-    for i in range(0, dz.h, 16):
-        pygame.draw.line(surface, GOLD_DIM, (dz.x, dz.y + i), (dz.x, dz.y + min(i+8, dz.h)), 1)
-        pygame.draw.line(surface, GOLD_DIM, (dz.right, dz.y + i), (dz.right, dz.y + min(i+8, dz.h)), 1)
-    
-    hint = font_small.render("Solte os parágrafos da lenda aqui", True, TEXT_DIM)
-    surface.blit(hint, (dz.centerx - hint.get_width()//2, dz.y + 15))
-
-def draw_trash_zone(surface):
-    chapter = CHAPTERS_DATA[current_chapter_index]
-    if len(chapter["paragraphs"]) > len(chapter["correct_order"]):
-        tz = pygame.Rect(600, HEIGHT - 85, WIDTH - 640, 65)
-        pygame.draw.rect(surface, (30, 10, 10), tz, border_radius=10)
-        pygame.draw.rect(surface, DANGER_LIGHT, tz, width=2, border_radius=10)
-        hint = font_small.render("LIXEIRA (Parágrafos Intrusos)", True, DANGER_LIGHT)
-        surface.blit(hint, (tz.centerx - hint.get_width()//2, tz.centery - hint.get_height()//2))
-
-def draw_roadmap_line(surface):
-    # Linha vertical da trilha
-    x = 80
-    for y in range(200, 620, 4):
-        color = FOREST if y < 300 else CARD_BORDER
-        pygame.draw.line(surface, color, (x, y), (x, y+2), 2)
-
 async def main():
     global game_state, message_timer, current_bug_index, score, lives, frame_count
-    global current_chapter_index, unlocked_chapters, typed_word, active_card, m5_start_frame
+    global current_chapter_index, unlocked_chapters, typed_word, typed_word_cursor, active_card, m5_start_frame, state_before_gameover, lupa_active
+    global collected_fragments, fragment_reveal_timer, fragment_reveal_text, current_fakes_count
+    global cinematic_slide, cinematic_timer, player_name, leaderboard_status, leaderboard_data, student_explanation
     clock = pygame.time.Clock()
     running = True
     active_card = None
@@ -651,23 +528,64 @@ async def main():
                     active_card.rect.y = event.pos[1] + active_card.offset_y
                 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if game_state not in ["MENU", "CINEMATIC", "INTRO", "ROADMAP", "FIM", "NAME_INPUT", "RANKING", "CHAPTER_INTRO"]:
+                    if btn_lupa.is_clicked(event.pos):
+                        lupa_active = not lupa_active
+                    if btn_voltar.is_clicked(event.pos):
+                        game_state = "ROADMAP"
                 if game_state == "MENU":
                     if btn_play_menu.is_clicked(event.pos):
+                        game_state = "NAME_INPUT"
+                    if btn_ranking_menu.is_clicked(event.pos):
+                        fetch_leaderboard()
+                        game_state = "RANKING"
+                elif game_state == "NAME_INPUT":
+                    if btn_confirm_name.is_clicked(event.pos) and len(player_name.strip()) > 0:
                         game_state = "CINEMATIC"
                         cinematic_slide, cinematic_timer = 0, 0
+                    elif btn_voltar_menu_principal.is_clicked(event.pos):
+                        game_state = "MENU"
+                elif game_state == "RANKING":
+                    if btn_voltar_menu.is_clicked(event.pos):
+                        game_state = "MENU"
                 elif game_state == "CINEMATIC":
                     if btn_skip_cine.is_clicked(event.pos) and cinematic_slide < 3:
-                        game_state = "INTRO"
+                        game_state = "ROADMAP"
                     elif cinematic_slide == 3 and btn_start_mission.is_clicked(event.pos):
-                        game_state = "INTRO"
-                elif game_state == "INTRO" and btn_next_intro.is_clicked(event.pos):
-                    game_state = "ROADMAP"
+                        game_state = "ROADMAP"
+                elif game_state == "CHAPTER_INTRO":
+                    if btn_ready_tutorial.is_clicked(event.pos):
+                        setup_mecanica_1()
+                        game_state = "MECANICA_1"
+                    elif btn_voltar_intro.is_clicked(event.pos):
+                        game_state = "ROADMAP"
                 elif game_state == "ROADMAP":
+                    if btn_voltar_menu_principal.is_clicked(event.pos):
+                        game_state = "MENU"
+                    elif btn_galeria.is_clicked(event.pos):
+                        game_state = "GALERIA"
                     for btn in roadmap_buttons:
                         if btn.is_clicked(event.pos):
                             current_chapter_index = btn.chapter_index
+                            lives = 3
+                            game_state = "CHAPTER_INTRO"
+                elif game_state == "GAME_OVER":
+                    if btn_retry.is_clicked(event.pos):
+                        lives = 3
+                        game_state = state_before_gameover
+                        if game_state in ["MECANICA_1", "MECANICA_1_WIN"]: 
                             setup_mecanica_1()
                             game_state = "MECANICA_1"
+                        elif game_state in ["MECANICA_3", "MECANICA_3_WIN"]:
+                            current_bug_index = 0; typed_word = ""; typed_word_cursor = 0
+                            for cw in bugs_to_fix: 
+                                cw.corrected = False
+                                cw.set_text(cw.clean)
+                            create_modal_buttons()
+                            game_state = "MECANICA_3"
+                        elif game_state in ["MECANICA_4", "MECANICA_4_WIN"]: 
+                            setup_mecanica_4()
+                            game_state = "MECANICA_4"
                 elif game_state == "MECANICA_1":
                     if btn_check.is_clicked(event.pos): check_order()
                     else:
@@ -683,47 +601,142 @@ async def main():
                     if btn_finish_bugs.is_clicked(event.pos): check_bugs()
                     else:
                         for cw in clickable_words:
-                            if cw.rect.collidepoint(event.pos): cw.marked = not cw.marked; break
+                            if cw.rect.collidepoint(event.pos):
+                                if not cw.marked:
+                                    chapter_bugs = CHAPTERS_DATA[current_chapter_index]["bugs"]
+                                    if cw.clean in chapter_bugs.keys():
+                                        cw.marked = True
+                                        play_sound(snd_success)
+                                    else:
+                                        score -= 5
+                                        current_fakes_count += 1
+                                        show_msg("Palavra correta! Falso positivo (-5 pts)", 90)
+                                        play_sound(snd_error)
+                                else:
+                                    cw.marked = False
+                                break
                 elif game_state == "MECANICA_3":
                     for btn in modal_buttons:
                         if btn.is_clicked(event.pos):
                             if btn.is_correct:
                                 score += 20; show_msg("Ortografia correta! +20 pts", 90)
+                                play_sound(snd_success)
                                 cw = bugs_to_fix[current_bug_index]
                                 cw.marked = False; cw.corrected = True
                                 cw.set_text(cw.text.replace(cw.clean, btn.text))
                                 current_bug_index += 1
                                 if current_bug_index >= len(bugs_to_fix): game_state = "MECANICA_3_WIN"
                                 else: create_modal_buttons()
-                            else: lives -= 1; show_msg("Grafia incorreta! -1 vida", 120)
+                            else: 
+                                bug_cw = bugs_to_fix[current_bug_index]
+                                correct_word = CHAPTERS_DATA[current_chapter_index]["bugs"][bug_cw.clean]["correto"]
+                                play_phonetic_feedback(correct_word)
+                                show_msg("Grafia incorreta! Reveja a regra ortográfica dessa palavra.", 240)
+                                play_sound(snd_error)
                             break
                 elif game_state == "MECANICA_4" and any(btn.is_clicked(event.pos) for btn in mec4_buttons):
                     for btn in mec4_buttons:
                         if btn.is_clicked(event.pos):
                             if btn.is_correct: 
-                                score += 150; show_msg("Padrão identificado! +150 pts. Avançando...", 120); game_state = "MECANICA_4_WIN"
-                            else: lives -= 1; show_msg("Esse não foi o padrão principal. Tente novamente!", 120)
+                                score += 150
+                                m4_time_spent = (pygame.time.get_ticks() - m4_start_time) / 1000.0
+                                update_m4_metrics(m4_time_spent)
+                                # Coletar fragmento do Mapa de Padrões
+                                fragment_name = btn.text
+                                if current_chapter_index not in [f["chapter"] for f in collected_fragments]:
+                                    collected_fragments.append({"chapter": current_chapter_index, "rule": fragment_name, "legend": CHAPTERS_DATA[current_chapter_index]["name"]})
+                                fragment_reveal_text = fragment_name
+                                fragment_reveal_timer = 180
+                                show_msg("Padrão identificado! +150 pts. Fragmento coletado!", 120)
+                                play_sound(snd_success)
+                                game_state = "MECANICA_4_WIN"
+                            else: 
+                                show_msg("Incorreto. Observe bem as palavras que você corrigiu para inferir a regra geral.", 240)
+                                play_sound(snd_error)
                 elif game_state == "MECANICA_5" and btn_finish_book.is_clicked(event.pos):
-                    game_state = "FIM"
-                elif game_state == "FIM" and btn_back_roadmap.is_clicked(event.pos):
-                    if current_chapter_index + 1 == unlocked_chapters and unlocked_chapters < len(CHAPTERS_DATA):
-                        unlocked_chapters += 1
+                    submit_metrics()
+                    if current_chapter_index == 3:
+                        submit_score()
+                    game_state = "ROADMAP"
+                    if current_chapter_index == 0: unlocked_chapters = max(unlocked_chapters, 2)
+                    elif current_chapter_index == 1: unlocked_chapters = max(unlocked_chapters, 3)
+                    elif current_chapter_index == 2: unlocked_chapters = max(unlocked_chapters, 4)
+                elif game_state in ["FIM", "GALERIA"] and btn_back_roadmap.is_clicked(event.pos):
+                    if game_state == "FIM":
+                        if current_chapter_index + 1 == unlocked_chapters and unlocked_chapters < len(CHAPTERS_DATA):
+                            unlocked_chapters += 1
                     game_state = "ROADMAP"
                             
-            if event.type == pygame.KEYDOWN and game_state == "MECANICA_3" and current_chapter_index >= 2:
-                if event.key == pygame.K_BACKSPACE: typed_word = typed_word[:-1]
-                elif event.key == pygame.K_RETURN:
-                    bug_cw = bugs_to_fix[current_bug_index]
-                    correct_word = CHAPTERS_DATA[current_chapter_index]["bugs"][bug_cw.clean]["correto"]
-                    if typed_word.strip().lower() == correct_word.lower():
-                        score += 40; show_msg("Ortografia perfeita! +40 pts", 90)
-                        cw = bugs_to_fix[current_bug_index]
-                        cw.marked = False; cw.corrected = True
-                        cw.set_text(cw.text.replace(cw.clean, correct_word))
-                        current_bug_index += 1; typed_word = ""
-                        if current_bug_index >= len(bugs_to_fix): game_state = "MECANICA_3_WIN"
-                    else: lives -= 1; show_msg("Grafia incorreta!", 120)
-                elif len(typed_word) < 20: typed_word += event.unicode
+            if event.type == pygame.TEXTINPUT:
+                if game_state == "NAME_INPUT":
+                    if len(player_name) < 15:
+                        player_name += event.text
+                elif game_state == "MECANICA_4_EXPLAIN":
+                    if len(student_explanation) < 300:
+                        student_explanation += event.text
+                elif game_state == "MECANICA_3" and current_chapter_index >= 2:
+                    if len(typed_word) < 20:
+                        char = event.text
+                        if char not in ["'", "`", "~", "^", "´", "¨"]:
+                            typed_word = typed_word[:typed_word_cursor] + char + typed_word[typed_word_cursor:]
+                            typed_word_cursor += len(char)
+
+
+            if event.type == pygame.KEYDOWN:
+                if game_state == "NAME_INPUT":
+                    if event.key == pygame.K_RETURN:
+                        if len(player_name.strip()) > 0:
+                            game_state = "CINEMATIC"
+                            cinematic_slide, cinematic_timer = 0, 0
+                    elif event.key == pygame.K_BACKSPACE:
+                        player_name = player_name[:-1]
+                elif game_state == "CINEMATIC":
+                    if event.key in [pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE]:
+                        game_state = "ROADMAP"
+                elif game_state == "MECANICA_4_EXPLAIN":
+                    if event.key == pygame.K_RETURN:
+                        if len(student_explanation.strip()) >= 10:
+                            show_msg("Síntese registrada com sucesso! Avançando...", 120)
+                            global m5_start_frame
+                            m5_start_frame = frame_count
+                            game_state = "MECANICA_5"
+                        else:
+                            show_msg("Por favor, escreva uma explicação mais detalhada.", 120)
+                    elif event.key == pygame.K_BACKSPACE:
+                        student_explanation = student_explanation[:-1]
+                elif game_state == "MECANICA_3" and current_chapter_index >= 2:
+                    if event.key == pygame.K_BACKSPACE:
+                        if typed_word_cursor > 0:
+                            typed_word = typed_word[:typed_word_cursor-1] + typed_word[typed_word_cursor:]
+                            typed_word_cursor -= 1
+                    elif event.key == pygame.K_DELETE:
+                        if typed_word_cursor < len(typed_word):
+                            typed_word = typed_word[:typed_word_cursor] + typed_word[typed_word_cursor+1:]
+                    elif event.key == pygame.K_LEFT:
+                        if typed_word_cursor > 0: typed_word_cursor -= 1
+                    elif event.key == pygame.K_RIGHT:
+                        if typed_word_cursor < len(typed_word): typed_word_cursor += 1
+                    elif event.key == pygame.K_RETURN:
+                        try:
+                            bug_cw = bugs_to_fix[current_bug_index]
+                            correct_word = CHAPTERS_DATA[current_chapter_index]["bugs"][bug_cw.clean]["correto"]
+                            if typed_word.strip().lower() == correct_word.lower():
+                                score += 40; show_msg("Ortografia perfeita! +40 pts", 90)
+                                play_sound(snd_success)
+                                cw = bugs_to_fix[current_bug_index]
+                                cw.marked = False; cw.corrected = True
+                                cw.set_text(cw.text.replace(cw.clean, correct_word))
+                                current_bug_index += 1; typed_word = ""; typed_word_cursor = 0
+                                if current_bug_index >= len(bugs_to_fix): game_state = "MECANICA_3_WIN"
+                            else: 
+                                play_phonetic_feedback(correct_word)
+                                show_msg("Grafia incorreta! Reveja a regra ortográfica dessa palavra.", 240)
+                                play_sound(snd_error)
+                        except Exception as err:
+                            print(f"CRITICAL ERROR on K_RETURN: {err}")
+                            show_msg("Erro interno! Veja o Console F12.", 180)
+                
+
                             
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1 and active_card:
                 active_card.dragging = False; active_card = None
@@ -731,21 +744,33 @@ async def main():
         if message_timer <= 0:
             if game_state == "MECANICA_1_WIN": setup_mecanica_2(saved_order); game_state = "MECANICA_2"
             elif game_state == "MECANICA_2_WIN": setup_mecanica_3(); game_state = "MECANICA_3"
-            elif game_state == "MECANICA_3_WIN": setup_mecanica_4(); game_state = "MECANICA_4"
-            elif game_state == "MECANICA_4_WIN": m5_start_frame = frame_count; game_state = "MECANICA_5"
+            elif game_state == "MECANICA_3_WIN":
+                if current_chapter_index == 0:
+                    # Cap 1 (Aprendiz): pula M4, vai direto para o Livro Animado
+                    m5_start_frame = frame_count; game_state = "MECANICA_5"
+                else:
+                    setup_mecanica_4(); game_state = "MECANICA_4"
+            elif game_state == "MECANICA_4_WIN":
+                if fragment_reveal_timer > 0:
+                    pass  # aguarda a animação de fragmento terminar
+                else:
+                    student_explanation = ""
+                    game_state = "MECANICA_4_EXPLAIN"
 
         if game_state == "CINEMATIC" and cinematic_slide == 2: screen.blit(bg_surface_glitch, (0, 0))
         else: screen.blit(bg_surface, (0, 0))
             
         draw_fireflies(screen)
-        if game_state not in ["MENU", "CINEMATIC", "INTRO", "ROADMAP", "FIM"]: draw_hud(screen)
+        if game_state not in ["MENU", "CINEMATIC", "INTRO", "ROADMAP", "FIM", "GALERIA", "NAME_INPUT", "RANKING", "CHAPTER_INTRO"]:
+            draw_hud(screen, score, insignias_decomposicao, insignias_abstracao, btn_lupa)
+            btn_voltar.draw(screen)
             
         if game_state == "MENU":
             pulse = 0.7 + 0.3 * math.sin(frame_count * 0.03)
+            # Create golden title correctly
             gr = int(GOLD[0] * pulse)
             gg = int(GOLD[1] * pulse)
             gb = int(GOLD[2] * pulse)
-            
             title = font_mega.render("DECODIFICA", True, (min(255,gr), min(255,gg), min(255,gb)))
             title_rect = title.get_rect(center=(WIDTH//2, HEIGHT//3 - 30))
             screen.blit(title, title_rect)
@@ -763,6 +788,49 @@ async def main():
             screen.blit(ver, (WIDTH//2 - ver.get_width()//2, HEIGHT - 40))
             
             btn_play_menu.draw(screen)
+            btn_ranking_menu.draw(screen)
+            
+        elif game_state == "NAME_INPUT":
+            title = font_title.render("Como você quer ser chamado?", True, GOLD)
+            screen.blit(title, (WIDTH//2 - title.get_width()//2, HEIGHT//3 - 50))
+            
+            # Input Box
+            input_rect = pygame.Rect(WIDTH//2 - 200, HEIGHT//3 + 30, 400, 60)
+            pygame.draw.rect(screen, CARD_BG, input_rect, border_radius=8)
+            pygame.draw.rect(screen, GOLD_DIM, input_rect, width=2, border_radius=8)
+            
+            name_surf = font_title.render(player_name + ("_" if frame_count % 60 < 30 else ""), True, TEXT_COLOR)
+            screen.blit(name_surf, (input_rect.x + 20, input_rect.y + 10))
+            
+            if len(player_name.strip()) > 0:
+                btn_confirm_name.draw(screen)
+            btn_voltar_menu_principal.draw(screen)
+                
+        elif game_state == "RANKING":
+            title = font_mega.render("Hall dos Guardiões", True, GOLD)
+            screen.blit(title, (WIDTH//2 - title.get_width()//2, 80))
+            
+            if leaderboard_status == "loading":
+                lbl = font_title.render("Carregando ranking...", True, TEXT_DIM)
+                screen.blit(lbl, (WIDTH//2 - lbl.get_width()//2, HEIGHT//2))
+            elif leaderboard_status == "error":
+                lbl = font_title.render("Erro ao conectar no banco de dados.", True, DANGER_LIGHT)
+                screen.blit(lbl, (WIDTH//2 - lbl.get_width()//2, HEIGHT//2))
+            else:
+                sy = 180
+                for i, row in enumerate(leaderboard_data):
+                    col = GOLD_LIGHT if i == 0 else TEXT_COLOR
+                    r_text = f"{i+1}o. {row.get('nome', '???')} - {row.get('pontos', 0)} pts"
+                    lbl = font_title.render(r_text, True, col)
+                    screen.blit(lbl, (WIDTH//2 - lbl.get_width()//2, sy))
+                    
+                    sub_text = f"Vidas: {row.get('vidas', 0)} | Decomp: {row.get('insignias_d', 0)} | Abst: {row.get('insignias_a', 0)}"
+                    lbl_sub = font_small.render(sub_text, True, TEXT_DIM)
+                    screen.blit(lbl_sub, (WIDTH//2 - lbl_sub.get_width()//2, sy + 35))
+                    
+                    sy += 80
+            
+            btn_voltar_menu.draw(screen)
             
         elif game_state == "CINEMATIC":
             cinematic_timer += 1
@@ -788,36 +856,42 @@ async def main():
             if cinematic_slide < 3:
                 btn_skip_cine.draw(screen)
                 
-        elif game_state == "INTRO":
-            parch_rect = pygame.Rect(WIDTH//2 - 350, 70, 700, 500)
+        elif game_state == "CHAPTER_INTRO":
+            parch_rect = pygame.Rect(WIDTH//2 - 400, 70, 800, 500)
             draw_parchment(screen, parch_rect)
             
-            title = font_title.render("A Missão do Guardião", True, FOREST_DARK)
+            ch_name = CHAPTERS_DATA[current_chapter_index]["name"]
+            title = font_title.render(f"Missão: {ch_name}", True, FOREST_DARK)
             screen.blit(title, (WIDTH//2 - title.get_width()//2, 100))
             
             lines = [
-                "A Amazônia guarda segredos milenares, mas um vírus",
-                "de bugs ortográficos está corrompendo nossas lendas!",
+                "Você está prestes a restaurar esta lenda amazônica.",
                 "",
-                "Você foi convocado para usar o Pensamento",
-                "Computacional e restaurá-las. Para isso:",
+                "Como funciona sua jornada:",
+                "1. Organize as partes da história na sequência correta.",
+                "2. Procure por erros ortográficos (Bugs) escondidos.",
+                "3. Corrija-os reescrevendo a palavra corretamente.",
+                "4. Descubra qual regra de ortografia foi quebrada.",
                 "",
-                "1. Organizar as partes da história",
-                "2. Caçar palavras corrompidas",
-                "3. Corrigir os bugs de escrita",
-                "4. Mapear os erros mais comuns",
+                "Atenção: Você tem 3 Vidas. Erros tiram vidas.",
+                "Insígnias de Pensamento Computacional:",
+                "   - Decomposição: Ganha ao organizar as partes sem errar.",
+                "   - Abstração: Ganha ao descobrir o padrão sem dicas.",
+                "Dica: Use a Lupa (L) se precisar, mas perderá pontos de bônus."
             ]
             
-            y_off = 180
-            step_colors = [None, None, None, None, None, None, FOREST, ACCENT_ORANGE, DANGER, GOLD_DIM]
+            y_off = 160
             for i, line in enumerate(lines):
-                if line:
-                    color = step_colors[i] if step_colors[i] else (60, 40, 20)
-                    tsurf = font_text.render(line, True, color)
-                    screen.blit(tsurf, (WIDTH//2 - tsurf.get_width()//2, y_off))
-                y_off += 32
+                if "Atenção:" in line: col = DANGER
+                elif "Insígnias" in line: col = FOREST
+                elif "Dica:" in line: col = (100, 80, 20)
+                else: col = (60, 40, 20)  # Dark brown for parchment
+                tsurf = font_text.render(line, True, col)
+                screen.blit(tsurf, (WIDTH//2 - tsurf.get_width()//2, y_off))
+                y_off += 28
                 
-            btn_next_intro.draw(screen)
+            btn_ready_tutorial.draw(screen)
+            btn_voltar_intro.draw(screen)
             
         elif game_state == "ROADMAP":
             title = font_title.render("Mapa das Lendas", True, GOLD)
@@ -841,7 +915,7 @@ async def main():
                 else:
                     # Cadeado
                     pygame.draw.rect(screen, (80,80,80), (74, cy+20, 12, 10), border_radius=2)
-                    pygame.draw.arc(screen, (80,80,80), (73, cy+14, 14, 14), 0, math.pi, 2)
+                    pygame.draw.circle(screen, (80,80,80), (80, cy+14), 7, 2)
                 
                 # Card do capítulo
                 card_rect = pygame.Rect(120, cy, WIDTH - 180, 70)
@@ -863,6 +937,129 @@ async def main():
                     btn.update_hover(mouse_pos)
                     btn.draw(screen)
                     roadmap_buttons.append(btn)
+            
+            btn_galeria.update_hover(mouse_pos)
+            btn_galeria.draw(screen)
+            btn_voltar_menu_principal.update_hover(mouse_pos)
+            btn_voltar_menu_principal.draw(screen)
+            
+            # --- Mapa de Padrões (Fragmentos Coletados) ---
+            if collected_fragments:
+                frag_y = 665
+                frag_title = font_small.render("Mapa de Padrões:", True, GOLD)
+                screen.blit(frag_title, (80, frag_y))
+                fx = 80 + frag_title.get_width() + 15
+                for frag in collected_fragments:
+                    # Ícone de fragmento (losango dourado)
+                    pts = [(fx + 10, frag_y + 2), (fx + 20, frag_y + 12), (fx + 10, frag_y + 22), (fx, frag_y + 12)]
+                    pygame.draw.polygon(screen, GOLD, pts)
+                    pygame.draw.polygon(screen, GOLD_LIGHT, pts, 1)
+                    # Tooltip com o nome da regra
+                    rule_surf = font_small.render(frag["rule"][:25], True, GOLD_LIGHT)
+                    screen.blit(rule_surf, (fx + 25, frag_y + 4))
+                    fx += rule_surf.get_width() + 45
+                # Fragmentos faltando
+                missing = len(CHAPTERS_DATA) - len(collected_fragments)
+                if missing > 0:
+                    for m in range(missing):
+                        pts = [(fx + 10, frag_y + 2), (fx + 20, frag_y + 12), (fx + 10, frag_y + 22), (fx, frag_y + 12)]
+                        pygame.draw.polygon(screen, CARD_BORDER, pts)
+                        pygame.draw.polygon(screen, (60, 60, 60), pts, 1)
+                        miss_surf = font_small.render("???", True, TEXT_DIM)
+                        screen.blit(miss_surf, (fx + 25, frag_y + 4))
+                        fx += 65
+            
+            # --- Insígnias (Resumo Roadmap) ---
+            ins_y = 665
+            ins_x = WIDTH - 650
+            ins_title = font_small.render("Insígnias:", True, GOLD)
+            screen.blit(ins_title, (ins_x, ins_y))
+            # Decomposição
+            dx = ins_x + ins_title.get_width() + 20
+            pygame.draw.circle(screen, (40, 120, 200), (dx, ins_y + 10), 12)
+            pygame.draw.circle(screen, (100, 180, 255), (dx, ins_y + 10), 12, 2)
+            td = font_small.render(f"Decomposição: {insignias_decomposicao}", True, (100, 180, 255))
+            screen.blit(td, (dx + 18, ins_y))
+            # Abstração
+            dx += td.get_width() + 35
+            pygame.draw.circle(screen, (150, 60, 180), (dx, ins_y + 10), 12)
+            pygame.draw.circle(screen, (255, 120, 220), (dx, ins_y + 10), 12, 2)
+            ta = font_small.render(f"Abstração: {insignias_abstracao}", True, (255, 120, 220))
+            screen.blit(ta, (dx + 18, ins_y))
+                        
+            btn_galeria.update_hover(mouse_pos)
+            btn_galeria.draw(screen)
+            
+        elif game_state == "GALERIA":
+            title = font_title.render("Galeria de Lendas", True, GOLD)
+            screen.blit(title, (WIDTH//2 - title.get_width()//2, 60))
+            sub = font_small.render("Artes desbloqueadas das lendas restauradas.", True, TEXT_DIM)
+            screen.blit(sub, (WIDTH//2 - sub.get_width()//2, 100))
+            
+            restored = [f["chapter"] for f in collected_fragments]
+            if unlocked_chapters >= 2 and 0 not in restored:
+                restored.append(0)
+            
+            for i, ch in enumerate(CHAPTERS_DATA):
+                # Posição do quadro (grid 2x2)
+                col = i % 2
+                row = i // 2
+                qx = WIDTH//2 - 420 + col * 440
+                qy = 135 + row * 240
+                q_rect = pygame.Rect(qx, qy, 400, 220)
+                
+                pygame.draw.rect(screen, CARD_BG, q_rect, border_radius=12)
+                pygame.draw.rect(screen, ch["color"] if i in restored else CARD_BORDER, q_rect, width=2, border_radius=12)
+                
+                name_surf = font_btn.render(ch["name"], True, TEXT_COLOR if i in restored else TEXT_DIM)
+                screen.blit(name_surf, (qx + 200 - name_surf.get_width()//2, qy + 180))
+                
+                # Área da arte
+                art_rect = pygame.Rect(qx + 20, qy + 20, 360, 150)
+                pygame.draw.rect(screen, (20, 30, 25), art_rect, border_radius=8)
+                
+                cx, cy = art_rect.centerx, art_rect.centery
+                if i in restored:
+                    # Arte Procedural
+                    if i == 0: # Guaraná
+                        for j in range(5):
+                            x_off = int(math.cos(j * 1.2) * 40)
+                            y_off = int(math.sin(j * 1.2) * 20)
+                            pygame.draw.circle(screen, (180, 40, 40), (cx + x_off, cy + y_off), 25)
+                            pygame.draw.circle(screen, (255, 255, 255), (cx + x_off, cy + y_off - 5), 10)
+                            pygame.draw.circle(screen, (0, 0, 0), (cx + x_off, cy + y_off - 5), 5)
+                    elif i == 1: # Mapinguari
+                        pygame.draw.circle(screen, (100, 60, 30), (cx, cy), 60)
+                        pygame.draw.circle(screen, (255, 255, 255), (cx, cy - 20), 25)
+                        pygame.draw.circle(screen, (180, 20, 20), (cx, cy - 20), 10)
+                        pygame.draw.ellipse(screen, (40, 10, 10), (cx - 30, cy + 15, 60, 30))
+                    elif i == 2: # Cobra Grande
+                        for j in range(8):
+                            sz = 30 - j * 2
+                            x_off = int(math.sin(j * 0.8 + frame_count * 0.05) * 40)
+                            pygame.draw.circle(screen, (20, 80, 40), (cx - 100 + j * 30, cy + x_off), sz)
+                        eye_y = int(cy + math.sin(frame_count * 0.05) * 40 - 10)
+                        pygame.draw.circle(screen, (255, 200, 0), (cx - 110, eye_y), 6)
+                        pygame.draw.circle(screen, (255, 200, 0), (cx - 90, eye_y), 6)
+                    elif i == 3: # Vitória Régia
+                        pygame.draw.circle(screen, (40, 140, 60), (cx, cy), 60)
+                        pygame.draw.polygon(screen, (20, 30, 25), [(cx, cy), (cx + 30, cy + 60), (cx - 30, cy + 60)])
+                        for j in range(6):
+                            ang = j * (math.pi / 3) + frame_count * 0.02
+                            fx = int(cx + math.cos(ang) * 15)
+                            fy = int(cy + math.sin(ang) * 15)
+                            pygame.draw.circle(screen, (255, 150, 200), (fx, fy), 12)
+                        pygame.draw.circle(screen, (255, 255, 100), (cx, cy), 8)
+                else:
+                    # Cadeado
+                    pygame.draw.rect(screen, (80,80,80), (cx - 15, cy - 5, 30, 25), border_radius=4)
+                    pygame.draw.circle(screen, (80,80,80), (cx, cy - 8), 10, 2)
+                    lock_surf = font_small.render("Restaurar Lenda", True, (120,120,120))
+                    screen.blit(lock_surf, (cx - lock_surf.get_width()//2, cy + 30))
+            
+            btn_back_roadmap.update_hover(mouse_pos)
+            btn_back_roadmap.draw(screen)
+
         elif game_state in ["MECANICA_1", "MECANICA_1_WIN"]:
             title = font_title.render("Reorganização Narrativa", True, GOLD)
             screen.blit(title, (40, 65))
@@ -870,9 +1067,34 @@ async def main():
             screen.blit(inst, (42, 108))
             
             draw_drop_zone(screen)
-            draw_trash_zone(screen)
+            
+            # Dica visual (Scaffolding) para os capítulos
+            if game_state == "MECANICA_1":
+                correct_order = CHAPTERS_DATA[current_chapter_index]["correct_order"]
+                hint_colors = [(50, 255, 50), (50, 200, 255), (255, 200, 50), (255, 100, 200)]
+                # Desenhar slots coloridos no drop zone
+                sy = 110
+                for i in range(len(correct_order)):
+                    c = hint_colors[i % len(hint_colors)]
+                    alpha = int(100 + 80 * math.sin(frame_count * 0.05))
+                    s_surf = pygame.Surface((WIDTH - 660, 95), pygame.SRCALPHA)
+                    pygame.draw.rect(s_surf, (*c, alpha), s_surf.get_rect(), width=3, border_radius=6)
+                    screen.blit(s_surf, (610, sy))
+                    sy += 100
+            
+            draw_trash_zone(screen, CHAPTERS_DATA[current_chapter_index])
             for card in cards:
                 card.draw(screen)
+                if game_state == "MECANICA_1":
+                    correct_order = CHAPTERS_DATA[current_chapter_index]["correct_order"]
+                    if card.para_id in correct_order:
+                        idx = correct_order.index(card.para_id)
+                        c = hint_colors[idx % len(hint_colors)]
+                        alpha = int(150 + 100 * math.sin(frame_count * 0.1))
+                        glow_surf = pygame.Surface((card.rect.w, card.rect.h), pygame.SRCALPHA)
+                        pygame.draw.rect(glow_surf, (*c, alpha), glow_surf.get_rect(), width=4, border_radius=6)
+                        screen.blit(glow_surf, (card.rect.x, card.rect.y))
+                        
             btn_check.draw(screen)
             
         elif game_state in ["MECANICA_2", "MECANICA_2_WIN"]:
@@ -885,6 +1107,10 @@ async def main():
             pygame.draw.rect(screen, CARD_BG, text_panel, border_radius=14)
             pygame.draw.rect(screen, CARD_BORDER, text_panel, width=1, border_radius=14)
             for cw in clickable_words:
+                if getattr(cw, 'marked', False):
+                    pygame.draw.rect(screen, ACCENT_ORANGE, cw.rect.inflate(4, 4), border_radius=4)
+                elif cw.rect.collidepoint(mouse_pos):
+                    pygame.draw.rect(screen, (80, 80, 100), cw.rect.inflate(4, 4), border_radius=4)
                 cw.draw(screen)
             btn_finish_bugs.draw(screen)
             
@@ -896,6 +1122,10 @@ async def main():
             pygame.draw.rect(screen, CARD_BG, text_panel, border_radius=14)
             pygame.draw.rect(screen, CARD_BORDER, text_panel, width=1, border_radius=14)
             for cw in clickable_words:
+                if getattr(cw, 'corrected', False):
+                    pygame.draw.rect(screen, FOREST, cw.rect.inflate(4, 4), border_radius=4)
+                elif getattr(cw, 'marked', False):
+                    pygame.draw.rect(screen, ACCENT_ORANGE, cw.rect.inflate(4, 4), border_radius=4)
                 cw.draw(screen)
                 
             if game_state == "MECANICA_3":
@@ -922,7 +1152,8 @@ async def main():
                     typed_surf = font_btn.render(typed_word, True, PARCHMENT)
                     screen.blit(typed_surf, (input_rect.x + 20, input_rect.y + 10))
                     
-                    cursor_x = input_rect.x + 20 + typed_surf.get_width()
+                    cursor_str = typed_word[:typed_word_cursor]
+                    cursor_x = input_rect.x + 20 + font_btn.size(cursor_str)[0]
                     pygame.draw.line(screen, cursor_color, (cursor_x, input_rect.y + 10), (cursor_x, input_rect.y + 40), 2)
                     
                     hint = font_small.render("Digite a palavra correta e aperte ENTER", True, TEXT_DIM)
@@ -932,17 +1163,96 @@ async def main():
             title = font_title.render("Mapa de Padrões", True, GOLD)
             screen.blit(title, (40, 65))
             
-            panel = pygame.Rect(WIDTH//2 - 300, 140, 600, 100)
-            pygame.draw.rect(screen, CARD_BG, panel, border_radius=12)
-            pygame.draw.rect(screen, CARD_BORDER, panel, width=1, border_radius=12)
+            # --- NPC Guardião Digital ---
+            gx, gy = 140, 200  # posição central do guardião
+            pulse_g = 0.5 + 0.5 * math.sin(frame_count * 0.04)
+            
+            # Aura brilhante atrás do guardião
+            aura_surf = pygame.Surface((200, 280), pygame.SRCALPHA)
+            aura_alpha = int(30 + 25 * pulse_g)
+            pygame.draw.ellipse(aura_surf, (*GOLD, aura_alpha), (10, 20, 180, 250))
+            screen.blit(aura_surf, (gx - 100, gy - 80))
+            
+            # Corpo / Manto (triângulo largo)
+            body_pts = [(gx, gy - 55), (gx - 50, gy + 100), (gx + 50, gy + 100)]
+            pygame.draw.polygon(screen, FOREST_DARK, body_pts)
+            pygame.draw.polygon(screen, FOREST, body_pts, 2)
+            
+            # Capuz (arco sobre a cabeça)
+            # Capuz (elipse já cobre)
+            pygame.draw.ellipse(screen, FOREST_DARK, (gx - 30, gy - 85, 60, 50))
+            pygame.draw.ellipse(screen, FOREST, (gx - 30, gy - 85, 60, 50), 2)
+            
+            # Rosto (oval escuro dentro do capuz)
+            pygame.draw.ellipse(screen, (15, 10, 8), (gx - 18, gy - 72, 36, 40))
+            
+            # Olhos brilhantes
+            eye_color = (int(200 + 55 * pulse_g), int(160 + 50 * pulse_g), 30)
+            pygame.draw.circle(screen, eye_color, (gx - 7, gy - 55), 4)
+            pygame.draw.circle(screen, eye_color, (gx + 7, gy - 55), 4)
+            # Reflexo dos olhos
+            pygame.draw.circle(screen, (255, 255, 200), (gx - 6, gy - 56), 1)
+            pygame.draw.circle(screen, (255, 255, 200), (gx + 8, gy - 56), 1)
+            
+            # Cajado (linha vertical com cristal no topo)
+            pygame.draw.line(screen, GOLD_DIM, (gx + 55, gy - 60), (gx + 55, gy + 100), 3)
+            # Cristal no topo do cajado
+            crystal_glow = int(180 + 75 * pulse_g)
+            crystal_color = (crystal_glow, int(crystal_glow * 0.8), 20)
+            crystal_pts = [(gx + 55, gy - 80), (gx + 48, gy - 62), (gx + 55, gy - 55), (gx + 62, gy - 62)]
+            pygame.draw.polygon(screen, crystal_color, crystal_pts)
+            pygame.draw.polygon(screen, GOLD_LIGHT, crystal_pts, 1)
+            
+            # Detalhes do manto (linhas decorativas)
+            pygame.draw.line(screen, GOLD_DIM, (gx - 15, gy + 20), (gx + 15, gy + 20), 1)
+            pygame.draw.line(screen, GOLD_DIM, (gx - 20, gy + 40), (gx + 20, gy + 40), 1)
+            pygame.draw.line(screen, GOLD_DIM, (gx - 25, gy + 60), (gx + 25, gy + 60), 1)
+            
+            # Nome do NPC
+            npc_name = font_small.render("Guardião Digital", True, GOLD_LIGHT)
+            screen.blit(npc_name, (gx - npc_name.get_width()//2, gy + 110))
+            
+            # Balão de fala (conectado ao guardião)
+            balloon = pygame.Rect(280, 140, WIDTH - 340, 100)
+            pygame.draw.rect(screen, CARD_BG, balloon, border_radius=12)
+            pygame.draw.rect(screen, GOLD_DIM, balloon, width=1, border_radius=12)
+            # Seta do balão apontando para o guardião
+            arrow_pts = [(280, 180), (250, 195), (280, 200)]
+            pygame.draw.polygon(screen, CARD_BG, arrow_pts)
+            pygame.draw.line(screen, GOLD_DIM, arrow_pts[0], arrow_pts[1], 1)
+            pygame.draw.line(screen, GOLD_DIM, arrow_pts[1], arrow_pts[2], 1)
             
             q_surf = font_btn.render("Qual padrão de erro ortográfico predominou nesta lenda?", True, PARCHMENT)
-            screen.blit(q_surf, (WIDTH//2 - q_surf.get_width()//2, panel.y + 35))
+            screen.blit(q_surf, (balloon.centerx - q_surf.get_width()//2, balloon.y + 35))
             
             if game_state == "MECANICA_4":
                 for btn in mec4_buttons:
                     btn.draw(screen)
                     
+        elif game_state == "MECANICA_4_EXPLAIN":
+            title = font_title.render("Sintetize seu Conhecimento", True, GOLD)
+            screen.blit(title, (WIDTH//2 - title.get_width()//2, 80))
+            
+            sub = font_text.render("Explique com suas palavras a regra ortográfica que você acabou de identificar:", True, PARCHMENT)
+            screen.blit(sub, (WIDTH//2 - sub.get_width()//2, 140))
+            
+            box_rect = pygame.Rect(WIDTH//2 - 400, 200, 800, 250)
+            pygame.draw.rect(screen, (20, 30, 25), box_rect, border_radius=12)
+            pygame.draw.rect(screen, GOLD_DIM, box_rect, width=2, border_radius=12)
+            
+            cursor = "|" if (frame_count % 60) < 30 else ""
+            display_text = student_explanation + cursor
+            
+            lines = wrap_text(display_text, font_text, box_rect.width - 40)
+            y_offset = box_rect.y + 20
+            for line in lines:
+                line_surf = font_text.render(line, True, PARCHMENT)
+                screen.blit(line_surf, (box_rect.x + 20, y_offset))
+                y_offset += font_text.get_height() + 5
+                
+            hint = font_small.render("Digite sua explicação e pressione ENTER para enviar", True, TEXT_DIM)
+            screen.blit(hint, (WIDTH//2 - hint.get_width()//2, 480))
+
         elif game_state == "MECANICA_5":
             # Livro Animado
             title = font_title.render("A Lenda Restaurada", True, GOLD)
@@ -953,9 +1263,15 @@ async def main():
             
             chapter = CHAPTERS_DATA[current_chapter_index]
             full_text = ""
+            import re
             for pid in saved_order:
                 pdata = next(p for p in chapter["paragraphs"] if p["id"] == pid)
-                full_text += pdata["text"] + "\n\n"
+                p_text = pdata["text"]
+                if "bugs" in chapter:
+                    for bug, bdata in chapter["bugs"].items():
+                        correct = bdata["correto"]
+                        p_text = re.sub(r'\b' + bug + r'\b', correct, p_text, flags=re.IGNORECASE)
+                full_text += p_text + "\n\n"
                 
             chars_to_show = (frame_count - m5_start_frame) // 2
             display_text = full_text[:chars_to_show]
@@ -973,6 +1289,13 @@ async def main():
                 
             if chars_to_show > len(full_text):
                 btn_finish_book.draw(screen)
+       
+        elif game_state == "GAME_OVER":
+            title = font_mega.render("GAME OVER", True, DANGER)
+            screen.blit(title, (WIDTH//2 - title.get_width()//2, HEIGHT//2 - 80))
+            sub = font_text.render("Suas vidas acabaram! A lenda foi corrompida.", True, TEXT_COLOR)
+            screen.blit(sub, (WIDTH//2 - sub.get_width()//2, HEIGHT//2 - 10))
+            btn_retry.draw(screen)
             
         elif game_state == "FIM":
             # Chuva de partículas douradas
@@ -990,14 +1313,15 @@ async def main():
             score_text = font_title.render(f"Pontos Totais: {score}", True, ACCENT_ORANGE)
             screen.blit(score_text, (WIDTH//2 - score_text.get_width()//2, 200))
             
-            final_msg = font_text.render("Você restaurou a Lenda do Guaraná e mapeou os padrões ortográficos!", True, TEXT_COLOR)
+            ch_name = CHAPTERS_DATA[current_chapter_index]['name']
+            final_msg = font_text.render(f"Você restaurou a {ch_name} e mapeou os padrões ortográficos!", True, TEXT_COLOR)
             screen.blit(final_msg, (WIDTH//2 - final_msg.get_width()//2, 260))
             
             # Lenda restaurada como "livro"
             book_rect = pygame.Rect(WIDTH//2 - 420, 310, 840, 280)
             draw_parchment(screen, book_rect)
             
-            book_title = font_btn.render("Lenda do Guaraná - Restaurada", True, FOREST_DARK)
+            book_title = font_btn.render(f"{ch_name} - Restaurada", True, FOREST_DARK)
             screen.blit(book_title, (WIDTH//2 - book_title.get_width()//2, 330))
             
             start_x = book_rect.x + 30
@@ -1045,6 +1369,37 @@ async def main():
                 screen.blit(msg_surf, msg_rect)
                 
             message_timer -= 1
+            
+        # Animação Global de revelação do fragmento (Pode sobrepor qualquer tela)
+        if fragment_reveal_timer > 0:
+            fragment_reveal_timer -= 1
+            # Fundo escurecido
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 140))
+            screen.blit(overlay, (0, 0))
+            # Card do fragmento
+            frag_rect = pygame.Rect(WIDTH//2 - 220, HEIGHT//2 - 120, 440, 240)
+            pygame.draw.rect(screen, CARD_BG, frag_rect, border_radius=16)
+            pygame.draw.rect(screen, GOLD, frag_rect, width=2, border_radius=16)
+            # Losango grande animado
+            scale_f = min(1.0, (180 - fragment_reveal_timer) / 30.0)
+            sz = int(40 * scale_f)
+            cx, cy_f = WIDTH//2, HEIGHT//2 - 40
+            frag_pts = [(cx, cy_f - sz), (cx + sz, cy_f), (cx, cy_f + sz), (cx - sz, cy_f)]
+            glow_a = int(80 + 60 * math.sin(frame_count * 0.08))
+            glow_surf = pygame.Surface((sz*4, sz*4), pygame.SRCALPHA)
+            pygame.draw.circle(glow_surf, (*GOLD, glow_a), (sz*2, sz*2), sz*2)
+            screen.blit(glow_surf, (cx - sz*2, cy_f - sz*2))
+            pygame.draw.polygon(screen, GOLD, frag_pts)
+            pygame.draw.polygon(screen, GOLD_LIGHT, frag_pts, 2)
+            # Texto
+            ft1 = font_subtitle.render("Fragmento Coletado!", True, GOLD_LIGHT)
+            screen.blit(ft1, (WIDTH//2 - ft1.get_width()//2, HEIGHT//2 + 20))
+            ft2 = font_text.render(fragment_reveal_text, True, PARCHMENT)
+            screen.blit(ft2, (WIDTH//2 - ft2.get_width()//2, HEIGHT//2 + 55))
+            
+        if lupa_active and game_state not in ["MENU", "CINEMATIC", "INTRO", "ROADMAP", "FIM"]:
+            draw_lupa(screen, mouse_pos)
         
         pygame.display.flip()
         await asyncio.sleep(0)
