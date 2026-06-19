@@ -290,10 +290,23 @@ async def fetch_leaderboard_task():
     try:
         import js
         import json
-        resp = await js.fetch("/api/leaderboard")
+        url = f"{js.window.location.origin}/api/leaderboard"
+        resp = await js.window.fetch(url)
         text = await resp.text()
-        leaderboard_data = json.loads(text)
-        leaderboard_status = "loaded"
+        
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            print("Server returned non-JSON:", text[:100])
+            leaderboard_status = "error"
+            return
+            
+        if isinstance(data, dict) and "error" in data:
+            print("Server Error:", data["error"])
+            leaderboard_status = "error"
+        else:
+            leaderboard_data = data
+            leaderboard_status = "loaded"
     except Exception as e:
         print("Erro fetch leaderboard", e)
         leaderboard_status = "error"
@@ -307,21 +320,22 @@ def submit_score():
     try:
         import js
         import json
-        opts = js.Object.new()
-        opts.method = "POST"
-        headers = js.Object.new()
-        headers["Content-Type"] = "application/json"
-        opts.headers = headers
-        opts.body = json.dumps({
+        payload = {
             "nome": player_name, 
             "pontos": score,
             "vidas": lives,
             "insignias_d": insignias_decomposicao,
             "insignias_a": insignias_abstracao
-        })
-        js.fetch("/api/score", opts)
-    except Exception:
-        pass
+        }
+        url = f"{js.window.location.origin}/api/score"
+        opts = js.JSON.parse(json.dumps({
+            "method": "POST",
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps(payload)
+        }))
+        js.window.fetch(url, opts)
+    except Exception as e:
+        print("Erro submit_score:", e)
 
 def submit_metrics():
     try:
@@ -329,17 +343,17 @@ def submit_metrics():
         import js
         import json
         metric = learning_metrics[-1]
-        opts = js.Object.new()
-        opts.method = "POST"
-        headers = js.Object.new()
-        headers["Content-Type"] = "application/json"
-        opts.headers = headers
         payload = metric.copy()
         payload["nome"] = player_name
-        opts.body = json.dumps(payload)
-        js.fetch("/api/metrics", opts)
-    except Exception:
-        pass
+        url = f"{js.window.location.origin}/api/metrics"
+        opts = js.JSON.parse(json.dumps({
+            "method": "POST",
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps(payload)
+        }))
+        js.window.fetch(url, opts)
+    except Exception as e:
+        print("Erro submit_metrics:", e)
 
 def setup_mecanica_1():
     global cards, chapter_start_time
